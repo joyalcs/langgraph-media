@@ -1,0 +1,24 @@
+version: "3.9"
+
+services:
+  langgraph_app:
+    container_name: langgraph_app
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./:/app
+      - faiss_data:/app/vectorstore
+    environment:
+      - PYTHONUNBUFFERED=1
+      - TAVILY_API_KEY=${TAVILY_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - LANGCHAIN_TRACING_V2=true
+      - LANGCHAIN_API_KEY=${LANGCHAIN_API_KEY}
+      - LANGCHAIN_PROJECT=langgraph-faiss-demo
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+
+volumes:
+  faiss_data:
