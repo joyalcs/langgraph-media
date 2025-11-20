@@ -11,14 +11,16 @@ services:
     volumes:
       - ./:/app
       - faiss_data:/app/vectorstore
+    env_file:
+      - .env
     environment:
       - PYTHONUNBUFFERED=1
       - TAVILY_API_KEY=${TAVILY_API_KEY}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - LANGCHAIN_TRACING_V2=true
-      - LANGCHAIN_API_KEY=${LANGCHAIN_API_KEY}
-      - LANGCHAIN_PROJECT=langgraph-faiss-demo
-    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+      - LANGSMITH_API_KEY=${LANGSMITH_API_KEY}
+      - LANGSMITH_PROJECT=pr-crushing-bassoon-25
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
 volumes:
   faiss_data:
