@@ -25,16 +25,14 @@ def intent_agent(state: State = {}):
             "needs_clarification": true/false,
             "missing_information": "If clarification needed, explain what is missing, else empty string",
             "findings": "Provide a brief summary of your analysis"
-        }
-
-        
+        }    
     """
     user_prompt = f"""User Message: {state.get("user_message", "")}"""
 
     response = llm_model.invoke(system_prompt + "\n\n" + user_prompt)
     data = json.loads(response.content)
     print("Intent Agent Response:", response)
-    state["intent"] = data["intent"]
+    state["intent"] = data["findings"]
     state["needs_clarification"] = data["needs_clarification"]
     state["missing_information"] = data["missing_information"]
     return state

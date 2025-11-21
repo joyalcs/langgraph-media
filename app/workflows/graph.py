@@ -1,3 +1,4 @@
+from app.agents.research_agent import research_agent
 from app.workflows.conditions.routing_conditions import should_clarification_is_nedded
 from langgraph.graph import StateGraph, START, END
 from IPython.display import Image, display
@@ -10,6 +11,7 @@ graph = StateGraph(State)
 graph.add_node("intent_agent", intent_agent)
 graph.add_node("planner_decision", planner_agent)
 graph.add_node("clarification_node",clarification_node )
+graph.add_node("research_agent", research_agent)
 
 graph.add_edge(START, "intent_agent")
 graph.add_conditional_edges(
@@ -20,7 +22,8 @@ graph.add_conditional_edges(
         "planner_decision": "planner_decision"
     }
 )
-graph.add_edge("planner_decision", END)
+graph.add_edge("planner_decision", "research_agent")
+graph.add_edge("research_agent", END)
 
 app = graph.compile()
 print(app)
