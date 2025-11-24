@@ -2,6 +2,7 @@
 # from app.core.state import State
 # from app.agents.base_agent import llm_model
 # from langchain_core.prompts import ChatPromptTemplate
+from app.tools.firecrawl_tool import parse_the_data
 from langchain_groq import ChatGroq
 # from langchain_community.tools.tavily_search import TavilySearchResults
 # from langchain_tavily import TavilySearch
@@ -151,137 +152,191 @@ llm_no_tools = ChatGroq(
 
 
 import json
-from app.core.state import State  # LLM without tools
+from app.core.state import State
 from langchain_tavily import TavilySearch
-
-# --------------------------
-# Research Agent
-# --------------------------
+from app.agents.base_agent import llm_model
 
 def research_agent(state: State = {}):
     sections = state.get("sections", [])
     intent = state.get("intent", "")
-
-    print("=== RESEARCH AGENT INPUT ===", sections)
+    
+    print("=== RESEARCH AGENT INPUT ===")
+    print(f"Total Sections: {len(sections)}")
 
     # Initialize Tavily client
     tavily = TavilySearch(max_results=5)
+    
+    research_results = []
+    
+    # Filter for RESEARCH sections only
+    research_sections = [s for s in sections if s.get("section_type") == "research"]
+    
+    if not research_sections:
+        print("No research sections found. Skipping research phase.")
+        return state
 
-    # ---------------------------------------
-    # STEP 1: Run Tavily search for each section
-    # ---------------------------------------
-    tavily_results = []
-
-    for section in sections:
-        query = section.get("title") or section.get("name") or section.get("query") or str(section)
+    for section in research_sections:
+        print(f"Processing Section: {section.get('title')}")
+        
+        # Generate optimized search query using LLM
+        query = generate_search_query(section, intent)
+            
+        print(f"  -> Search Query: {query}")
 
         try:
+            # Execute Search
             search_output = tavily.invoke({"query": query})
-            tavily_results.append({
-                "section_name": query,
-                "raw_search_results": search_output
-            })
-
+            
+            # Check for search errors or empty results
+            if isinstance(search_output, dict) and "error" in search_output:
+                print(f"  -> Search API Error: {search_output['error']}")
+                research_results.append({
+                    "section_title": section.get("title"),
+                    "error": search_output['error'],
+                    "articles": []
+                })
+                continue
+            # Extract structured data using LLM
+            extracted_data = extract_data_with_llm(search_output, section, intent)
+            extracted_articles = extracted_data.get("articles", [])
+            for extracted_article in extracted_articles:
+                data = parse_the_data(extracted_article.get("url"))
+                research_results.append({
+                    "title": data.get("title"),
+                    "description": data.get("description"),
+                    "url": data.get("url"),
+                })
+            
         except Exception as e:
-            print("Tavily error:", e)
-            tavily_results.append({
-                "section_name": query,
-                "raw_search_results": []
+            print(f"  -> Error in section '{section.get('title')}': {e}")
+            research_results.append({
+                "section_title": section.get("title"),
+                "error": str(e),
+                "articles": []
             })
+            
+    # Update state with research results
+    # We append to existing research_data if any, or create new
+    current_data = state.get("research_data", [])
+    if isinstance(current_data, list):
+        state["research_data"] = current_data + research_results
+    else:
+        state["research_data"] = research_results
+        
+    print("=== RESEARCH AGENT COMPLETE ===")
+    return state
 
-    # ---------------------------------------
-    # STEP 2: Ask the LLM to extract structured JSON
-    # ---------------------------------------
 
-    extraction_system_prompt = """
-You are a Research Extraction Agent.
-
-You will receive:
-- A list of sections
-- Tavily search results for each section
-
-Your task:
-- Extract ONLY factual information found in search results.
-- For each article, extract:
-
-  - headline
-  - summary
-  - publication_date
-  - source
-  - url
-  - quotes (array)
-  - competitors_mentioned (array)
-  - entity_mentions (array)
-
-Rules:
-- If a section has no results → articles = []
-- DO NOT hallucinate.
-- DO NOT fabricate missing data.
-- Use only what appears in search results.
-- Output ONLY raw JSON (no text, no commentary).
-
-JSON schema:
-{
-  "sections": [
-    {
-      "section_name": "string",
-      "articles": [
-        {
-          "headline": "string",
-          "summary": "string",
-          "publication_date": "string",
-          "source": "string",
-          "url": "string",
-          "quotes": ["string"],
-          "competitors_mentioned": ["string"],
-          "entity_mentions": ["string"]
-        }
-      ]
-    }
-  ]
-}
-"""
-
-    extraction_user_prompt = f"""
-Extract facts from the following Tavily search results:
-
-{json.dumps(tavily_results, indent=2)}
-
-INTENT: {intent}
-
-Return ONLY valid JSON following the schema.
-"""
-
-    llm_output = llm_no_tools.invoke([
-        {"role": "system", "content": extraction_system_prompt},
-        {"role": "user", "content": extraction_user_prompt},
-    ])
-
-    text = llm_output.content.strip()
-
-    # remove accidental code fences
-    if text.startswith("```"):
-        text = text.strip("`")
-    if text.startswith("json"):
-        text = text.replace("json", "", 1)
-
-    # ---------------------------------------
-    # STEP 3: Parse JSON from the LLM
-    # ---------------------------------------
+def extract_data_with_llm(search_results, section, intent):
+    """
+    Helper function to extract structured data from raw search results using LLM.
+    """
+    
+    system_prompt = """
+    You are a Research Extraction Agent.
+    Your task is to extract factual information from the provided search results.
+    
+    EXTRACT:
+    - Headlines
+    - Summaries (concise, factual)
+    - Publication Dates (YYYY-MM-DD if available)
+    - Sources/Outlets
+    - URLs
+    - Key Quotes (especially from executives/officials)
+    
+    RULES:
+    1. Use ONLY the provided search results. Do NOT hallucinate.
+    2. If a result is irrelevant to the section topic, ignore it.
+    3. Return valid JSON only.
+    """
+    
+    user_prompt = f"""
+    ### Section Goal:
+    {section.get('title')}
+    {section.get('scope_of_research')}
+    
+    ### User Intent:
+    {intent}
+    
+    ### Raw Search Results:
+    {json.dumps(search_results, indent=2, default=str)}
+    
+    ### Output JSON Schema:
+    {{
+        "articles": [
+            {{
+                "headline": "string",
+                "summary": "string",
+                "publication_date": "string",
+                "source": "string",
+                "url": "string",
+                "quotes": ["string"]
+            }}
+        ]
+    }}
+    """
+    
     try:
-        parsed = json.loads(text)
-
-        if "sections" not in parsed:
-            return {
-                "error": "Invalid JSON - missing 'sections'",
-                "raw": text
-            }
-
-        return parsed
-
+        response = llm_model.invoke(system_prompt + "\n\n" + user_prompt)
+        content = response.content.strip()
+        
+        # Clean up code blocks if present
+        if content.startswith("```json"):
+            content = content.replace("```json", "", 1)
+        if content.startswith("```"):
+            content = content.replace("```", "", 1)
+        if content.endswith("```"):
+            content = content.rsplit("```", 1)[0]
+            
+        return json.loads(content.strip())
+        
     except Exception as e:
-        print("JSON parse error:", e)
-        return {
-            "error": "Failed to parse LLM output",
-            "raw": text
-        }
+        print(f"  -> Extraction Error: {e}")
+        return {"articles": []}
+
+
+def generate_search_query(section, intent):
+    """
+    Generates a concise, keyword-optimized search query based on the section scope and user intent.
+    """
+    system_prompt = """
+    You are a Search Query Optimizer.
+    Your task is to convert a research scope into a single, concise, keyword-rich search query.
+    
+    RULES:
+    1. Output ONLY the search query string. No quotes, no explanations.
+    2. Keep it under 200 characters.
+    3. Focus on specific entities, topics, and keywords.
+    4. Remove instruction words like "Search for", "Find", "Extract", "Analyze".
+    """
+    
+    user_prompt = f"""
+    ### Scope of Research:
+    {section.get('scope_of_research')}
+    
+    ### Section Title:
+    {section.get('title')}
+    
+    ### User Intent:
+    {intent}
+    
+    Generate the best search query:
+    """
+    
+    try:
+        response = llm_model.invoke(system_prompt + "\n\n" + user_prompt)
+        query = response.content.strip()
+        
+        # Remove quotes if present
+        if query.startswith('"') and query.endswith('"'):
+            query = query[1:-1]
+            
+        # Hard truncation safety net
+        if len(query) > 300:
+            query = query[:300]
+            
+        return query
+    except Exception as e:
+        print(f"  -> Query Generation Error: {e}")
+        # Fallback
+        return f"{section.get('title')} {intent}"[:200]
