@@ -30,6 +30,11 @@ def faiss_recall_tool(query: str) -> str:
         - Cache grows over time as more searches are performed
         - Requires FAISS index to exist in the faiss_cache directory
     """
+    print("====================PERFORMING faiss_recall_tool===============================", faiss_cache.search(query))
+    results = faiss_cache.search_with_score(
+        query, 
+    )
+    print("restulll", results)
     return faiss_cache.search(query)
 
 @tool
@@ -60,5 +65,8 @@ def tavily_search_tool(query: str) -> list:
         - Use faiss_recall_tool first to check cache before calling this
     """
     result = tavily.invoke({"query": query})
+    print("====================PERFORMING tavily_search_tool===============================", result)
+    
     faiss_cache.save(query, json.dumps(result))
     return result
+

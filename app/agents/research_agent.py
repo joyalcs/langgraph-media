@@ -155,75 +155,154 @@ import json
 from app.core.state import State
 from langchain_tavily import TavilySearch
 from app.agents.base_agent import llm_model
+from app.tools.research_tools import faiss_recall_tool, tavily_search_tool
+from app.tools.firecrawl_tool import parse_the_data
+from langgraph.prebuilt import create_react_agent
 
+def generate_search_query(section, intent):
+    """
+    Generates a concise, keyword-optimized search query based on the section scope and user intent.
+    """
+    system_prompt = """
+    You are a Search Query Optimizer.
+    Your task is to convert a research scope into a single, concise, keyword-rich search query.
+    
+    RULES:
+    1. Output ONLY the search query string. No quotes, no explanations.
+    2. Keep it under 200 characters.
+    3. Focus on specific entities, topics, and keywords.
+    4. Remove instruction words like "Search for", "Find", "Extract", "Analyze".
+    """
+    
+    user_prompt = f"""
+    ### Scope of Research:
+    {section.get('scope_of_research')}
+    
+    ### Section Title:
+    {section.get('title')}
+    
+    ### User Intent:
+    {intent}
+    
+    Generate the best search query:
+    """
+    
+    try:
+        response = llm_model.invoke(system_prompt + "\n\n" + user_prompt)
+        query = response.content.strip()
+        
+        # Remove quotes if present
+        if query.startswith('"') and query.endswith('"'):
+            query = query[1:-1]
+            
+        # Hard truncation safety net
+        if len(query) > 300:
+            query = query[:300]
+            
+        return query
+    except Exception as e:
+        print(f"  -> Query Generation Error: {e}")
+        # Fallback
+        return f"{section.get('title')} {intent}"[:200]
 def research_agent(state: State = {}):
+    """
+    Research workflow:
+        1. Try FAISS recall.
+        2. If FAISS has results → RETURN DIRECTLY (NO PARSE, NO TAVILY).
+        3. If empty → run Tavily search.
+        4. Parse all Tavily URLs using parse_the_data.
+        5. Return structured research data for writer agent.
+    """
+
     sections = state.get("sections", [])
     intent = state.get("intent", "")
-    
+
     print("=== RESEARCH AGENT INPUT ===")
     print(f"Total Sections: {len(sections)}")
 
-    # Initialize Tavily client
-    tavily = TavilySearch(max_results=5)
+    # ----------------------------
+    # AGENT PROMPT (fallback logic)
+    # ----------------------------
+    prompt = """
+        You are a research agent. Follow the EXACT workflow:
+
+        STEP 1 — FAISS RECALL
+        - Use faiss_recall_tool first.
+        - If FAISS returns NON-EMPTY results (len > 0):
+            • Immediately return:
+                [{"url": <faiss_url>}]
+            • DO NOT perform Tavily search.
+
+        STEP 2 — TAVILY SEARCH (only if FAISS empty)
+        - Use tavily_search_tool.
+        - The Tavily result will contain a list of URLs.
+
+        STEP 3 — PARSE (required for Tavily results)
+        - For EVERY URL returned by Tavily:
+            • Call parse_the_data
+
+        FINAL OUTPUT FORMAT (STRICT)
+        Must ALWAYS return a JSON list of objects in this exact format:
+
+        [
+            { "url": "https://example.com/page" },
+            { "url": "https://another.com/page" }
+        ]
+    """
     
+
+    # ----------------------------
+    # Create the Agent (correct!)
+    # ----------------------------
+    agent = create_react_agent(
+        model=llm_model,
+        tools=[faiss_recall_tool, tavily_search_tool, parse_the_data],
+        prompt=prompt
+    )
+
     research_results = []
-    
-    # Filter for RESEARCH sections only
-    research_sections = [s for s in sections if s.get("section_type") == "research"]
-    
-    if not research_sections:
-        print("No research sections found. Skipping research phase.")
-        return state
 
-    for section in research_sections:
-        print(f"Processing Section: {section.get('title')}")
-        
-        # Generate optimized search query using LLM
+    # ============================================================
+    # RUN FOR EACH SECTION
+    # ============================================================
+    for section in sections:
         query = generate_search_query(section, intent)
-            
-        print(f"  -> Search Query: {query}")
 
-        try:
-            # Execute Search
-            search_output = tavily.invoke({"query": query})
-            
-            # Check for search errors or empty results
-            if isinstance(search_output, dict) and "error" in search_output:
-                print(f"  -> Search API Error: {search_output['error']}")
-                research_results.append({
-                    "section_title": section.get("title"),
-                    "error": search_output['error'],
-                    "articles": []
-                })
-                continue
-            # Extract structured data using LLM
-            extracted_data = extract_data_with_llm(search_output, section, intent)
-            extracted_articles = extracted_data.get("articles", [])
-            for extracted_article in extracted_articles:
-                data = parse_the_data(extracted_article.get("url"))
-                research_results.append({
-                    "title": data.get("title"),
-                    "description": data.get("description"),
-                    "url": data.get("url"),
-                })
-            
-        except Exception as e:
-            print(f"  -> Error in section '{section.get('title')}': {e}")
-            research_results.append({
-                "section_title": section.get("title"),
-                "error": str(e),
-                "articles": []
-            })
-            
-    # Update state with research results
-    # We append to existing research_data if any, or create new
-    current_data = state.get("research_data", [])
-    if isinstance(current_data, list):
-        state["research_data"] = current_data + research_results
-    else:
-        state["research_data"] = research_results
-        
-    print("=== RESEARCH AGENT COMPLETE ===")
+        print("\n=== Running Agent for Query ===")
+        print("QUERY:", query)
+
+        # Call the agent
+        response = agent.invoke(
+            {"messages": [{"role": "user", "content": query}]}
+        )
+        # print("ressdfsaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", response.content)
+        # # The last message is always the AIMessage
+        # last_msg = response.get("messages")[-1]
+        # content = last_msg.content.strip()
+        # print("content====================================", content)
+        for msg in response["messages"]:
+            if msg.__class__.__name__ == "ToolMessage":
+                data = msg.content
+                data = json.loads(data)
+                print("data", data)
+                results = data.get("results", [])
+
+                for item in results:
+                    url = item.get("url")
+                    title = item.get("title")
+                    content = item.get("content")
+                    score = item.get("score")
+                    data = parse_the_data(url)
+                    research_results.append({
+                        "title": data.get("title"),
+                        "description": data.get("description"),
+                        "url": data.get("url"),
+                    })
+
+        # ============================================================
+        # PARSE EACH URL → FIRECRAWL
+        # ============================================================
+    state["research_data"] = research_results
     return state
 
 
@@ -237,12 +316,7 @@ def extract_data_with_llm(search_results, section, intent):
     Your task is to extract factual information from the provided search results.
     
     EXTRACT:
-    - Headlines
-    - Summaries (concise, factual)
-    - Publication Dates (YYYY-MM-DD if available)
-    - Sources/Outlets
     - URLs
-    - Key Quotes (especially from executives/officials)
     
     RULES:
     1. Use ONLY the provided search results. Do NOT hallucinate.

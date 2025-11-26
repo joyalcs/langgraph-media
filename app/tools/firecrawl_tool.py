@@ -1,11 +1,63 @@
 from firecrawl import Firecrawl
 import time
 from langchain_groq import ChatGroq
+from app.agents.base_agent import llm_model
 
 firecrawl = Firecrawl(api_key="fc-012536fdba0a40cb9f31d7412c7afd7b")
-llm = ChatGroq(model="openai/gpt-oss-20b", temperature=0)
+llm = llm_model
 
 def parse_the_data(url):
+    """
+    Scrape, extract, and summarize webpage content using Firecrawl and an LLM.
+
+    This function performs a full extraction workflow for a given URL:
+
+    **1. Firecrawl Scrape**
+       - Attempts to scrape the webpage in both `markdown` and `html` formats.
+       - Handles scenarios where Firecrawl returns:
+         - A single dictionary
+         - A list of results
+         - A Firecrawl object with attributes
+
+    **2. Metadata Extraction**
+       - Extracts common metadata fields:
+         - `title`
+         - `description`
+         - `sourceURL` or fallback to provided URL
+       - Supports both dict-style and attribute-style metadata (`DocumentMetadata`).
+
+    **3. Content Summarization**
+       - Uses an LLM (`llm.invoke`) to summarize the description into ~200 words.
+       - Includes fallback logic:
+         - If LLM summarization fails, falls back to a shortened description.
+
+    **4. Standardized Return Object**
+       - Returns a clean Python `dict` containing:
+         - `title`: str
+         - `description`: summarized text
+         - `url`: canonical source URL
+
+    **Error Handling**
+       - Catches scraping and summarization errors.
+       - Prints diagnostic messages for debugging.
+       - Returns `None` if scraping or parsing completely fails.
+
+    Parameters
+    ----------
+    url : str
+        The webpage URL to scrape and extract structured data from.
+
+    Returns
+    -------
+    dict or None
+        A dictionary with the extracted fields:
+        {
+            "title": str,
+            "description": str,
+            "url": str
+        }
+        Returns `None` if extraction fails or produces empty results.
+    """
     try:
         # Scrape a single webpage
         scrape_result = firecrawl.scrape(
