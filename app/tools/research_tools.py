@@ -73,17 +73,7 @@ def tavily_search_tool(query: str) -> list:
     """
     
     try:
-        # Check cache first
         print("====================PERFORMING tavily_search_tool===============================")
-        
-        cached_result = faiss_cache.search(query, threshold=0.7)
-        if cached_result:
-            print("✅ Cache hit - returning cached result")
-            return cached_result
-        
-        print("❌ Cache miss - performing new search")
-        
-        # Initialize Tavily search
         search = TavilySearch(
             max_results=5,
             search_depth="advanced",

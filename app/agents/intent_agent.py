@@ -2,73 +2,61 @@ import json
 from app.core.state import State
 from app.agents.base_agent import llm_model
 from datetime import datetime, timedelta
+from langgraph.prebuilt import create_react_agent
 def intent_agent(state: State = {}):
-    today = datetime.now().date()
-    thirty_days_ago = today - timedelta(days=30)
+   today = datetime.now().date()
+   thirty_days_ago = today - timedelta(days=30)
     
-    system_prompt = f"""
-        You are an Intent Detection Agent for a media application.
+   system_prompt = f"""
+        You are an Intent Detection Agent for a media and automotive application.
         Your job is to analyze the user's message and identify their intent with high precision.
-
-        INTENT CATEGORIES:
-        1. "media_info":
-           - User asks about movies, TV shows, actors, directors, cast, plot, release dates, ratings, or news about celebrities.
-           - Examples: "Who directed Inception?", "Tell me about Tom Cruise", "What is the plot of The Matrix?", "Latest news on Marvel movies".
-
-        2. "search":
-           - General information lookup that doesn't fit strictly into media info, or broad searches.
-           - Examples: "Search for best sci-fi books", "Information about space travel".
-
-        3. "recommendation":
-           - User explicitly asks for suggestions or recommendations for content (movies, music, books, etc.).
-           - Examples: "Suggest some good horror movies", "What should I watch tonight?", "Recommend me a song like this".
-
-        4. "fact_lookup":
-           - User asks a direct factual question that expects a specific answer (often non-media related or general knowledge).
-           - Examples: "What is the capital of France?", "How tall is Mount Everest?".
-
-        5. "news":
-           - User specifically wants the latest updates, headlines, or current events (can be general or specific topics).
-           - Examples: "What's happening in the world today?", "Latest tech news".
-
-        6. "unknown":
-           - The user's intent is unclear, ambiguous, or consists of chitchat/greetings (e.g., "Hello", "Hi", "How are you?").
-           - Use this if the query doesn't fit any of the above categories.
-
-        INSTRUCTIONS:
+        CRITICAL INSTRUCTIONS:
         1. Analyze the user's message carefully.
         2. Assign the most appropriate category from the list above.
-        3. Determine if the query is incomplete or ambiguous ("needs_clarification").
-        4. If incomplete, describe exactly what information is missing in "missing_information".
-        5. Provide a brief summary of your analysis in "findings".
-        6. If date range is not provided in the message, use last 30 days as date range (from {thirty_days_ago} to {today}).
-        7. If region is not specified in the user message, assume region as "global".
-
-        Response MUST be valid JSON ONLY with this exact structure:
+        3. For automotive queries, DO NOT ask for clarification on year/color/variant - provide latest model info.
+        4. ONLY set needs_clarification=true if the core request is genuinely unclear or ambiguous.
+        5. The "findings" field should be a brief analysis summary (max 200 chars), NOT a statement to the user.
+        6. If date range is not provided, use last 30 days as date range (from {thirty_days_ago} to {today}).
+        7. If region is not specified, assume region as "global".
+   
+        RESPONSE FORMAT:
+        You MUST respond with ONLY valid JSON in this EXACT structure. Do not add any other text.
+        
         {{
-            "intent": "<one of: media_info, search, recommendation, fact_lookup, news, unknown>",
-            "needs_clarification": true/false,
-            "missing_information": "<what is missing, or empty string>",
-            "findings": "<brief summary of analysis, maximum 200 characters>"
+            "intent": "<dynamically determined intent category - be specific and descriptive>
+            "needs_clarification": <true or false boolean>,
+            "missing_information": "<specific missing info OR empty string if none>",
+            "findings": "<brief internal analysis summary, maximum 200 characters>"
         }}
     """
-    user_prompt = f"""User Message: {state.get("user_message", "")}"""
-
-    response = llm_model.invoke(system_prompt + "\n\n" + user_prompt)
-    try:
-        data = json.loads(response.content)
-    except json.JSONDecodeError:
-        # Fallback if JSON is invalid
-        print("Error decoding JSON response:", response.content)
-        data = {
+   user_prompt = f"""User Message: {state.get("user_message", "")}"""
+   agent = create_react_agent(
+        model=llm_model,
+        tools=[],
+        prompt=system_prompt
+   )
+   response = agent.invoke(
+      {"messages": [{"role": "user", "content": user_prompt}]}
+   )
+   print("INTENT RESPONSE=========================", response)
+   try:
+      for msg in response["messages"]:
+         if msg.__class__.__name__ == "AIMessage":
+            content = msg.content
+   
+      data = json.loads(content)
+   except json.JSONDecodeError:
+      # Fallback if JSON is invalid
+      print("Error decoding JSON response:", response.content)
+      data = {
             "intent": "unknown",
             "needs_clarification": False,
             "missing_information": "",
             "findings": "Error processing request"
-        }
+      }
 
-    print("Intent Agent Response:", data)
-    state["intent"] = data["findings"]
-    state["needs_clarification"] = data["needs_clarification"]
-    state["missing_information"] = data["missing_information"]
-    return state
+   print("Intent Agent Response:", data)
+   state["intent"] = data["findings"]
+   state["needs_clarification"] = data["needs_clarification"]
+   state["missing_information"] = data["missing_information"]
+   return state

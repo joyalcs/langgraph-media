@@ -22,7 +22,7 @@ class FaissCache:
                 allow_dangerous_deserialization=True
             )
 
-    def search(self, query, threshold=0.3):
+    def search(self, query, threshold=0.8):
         """
         Search for a cached result for a similar query.
         
@@ -51,14 +51,14 @@ class FaissCache:
         stored_query, stored_answer = content.split("result:", 1)
         return stored_answer.strip()
 
-    def search_with_score(self, query, threshold=0.3):
+    def search_with_score(self, query, threshold=0.8):
         """
         Check if a similar query exists in the cache.
         
         Args:
             query: The search query
             threshold: Maximum L2 distance for a match (lower = more similar)
-                      Typical values: 0.1-0.3 for strict matching, 0.3-0.5 for loose
+                      Typical values: 0.1-0.8 for strict matching, 0.8< for loose
         
         Returns:
             True if a good match is found (score <= threshold), False otherwise

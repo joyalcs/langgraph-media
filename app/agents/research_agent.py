@@ -537,9 +537,6 @@ def research_agent(state: State = {}):
         Your output must ALWAYS be a JSON list of objects based on the query’s intention.
     """
 
-    # ----------------------------
-    # Create the Agent
-    # ----------------------------
     agent = create_react_agent(
         model=llm_model,
         tools=[faiss_recall_tool, tavily_search_tool, parse_the_data],
@@ -548,50 +545,31 @@ def research_agent(state: State = {}):
 
     research_results = []
 
-    # ============================================================
-    # RUN FOR EACH SECTION
-    # ============================================================
     for section in sections:
         query = generate_search_query(section, intent)
 
         print("\n=== Running Agent for Query ===")
         print("QUERY:", query)
 
-        # Call the agent
         response = agent.invoke(
             {"messages": [{"role": "user", "content": query}]}
         )
 
-        # ============================================================
-        # EXTRACT TOOL MESSAGES (SKIP FAISS, PROCESS TAVILY ONLY)
-        # ============================================================
         for msg in response["messages"]:
             if msg.__class__.__name__ == "ToolMessage":
-                # Get the tool name from the message
                 tool_name = msg.name
                 
                 print(f"\n=== Processing {tool_name} ===")
                 
-                # Skip FAISS results
-                if tool_name == "faiss_recall_tool":
-                    print("Skipping FAISS results...")
-                    continue
-                
-                # Process Tavily results
-                if tool_name == "tavily_search_tool":
-                    try:
-                        # Parse the content
+                try:
                         content = msg.content
                         
-                        # Handle null/None case
                         if content is None or content == "null":
                             print("Tavily returned null, skipping...")
                             continue
                         
-                        # Parse JSON
                         data = json.loads(content)
                         
-                        # Handle case where data itself is None
                         if data is None:
                             print("Tavily data is None, skipping...")
                             continue
@@ -619,7 +597,7 @@ def research_agent(state: State = {}):
                             try:
                                 # Parse the URL content
                                 parsed_data = parse_the_data(url)
-                                
+                                print("parsed data", parsed_data)
                                 research_results.append({
                                     "title": parsed_data.get("title", ""),
                                     "description": parsed_data.get("description", ""),
@@ -629,13 +607,13 @@ def research_agent(state: State = {}):
                                 print(f"Error parsing {url}: {parse_error}")
                                 continue
                     
-                    except json.JSONDecodeError as e:
-                        print(f"JSON decode error for Tavily result: {e}")
-                        print(f"Content was: {content}")
-                        continue
-                    except Exception as e:
-                        print(f"Unexpected error processing Tavily result: {e}")
-                        continue
+                except json.JSONDecodeError as e:
+                    print(f"JSON decode error for Tavily result: {e}")
+                    print(f"Content was: {content}")
+                    continue
+                except Exception as e:
+                    print(f"Unexpected error processing Tavily result: {e}")
+                    continue
 
     print(f"\n=== RESEARCH COMPLETE ===")
     print(f"Total results collected: {len(research_results)}")

@@ -1,10 +1,15 @@
+import os
 from firecrawl import Firecrawl
 import time
 from langchain_groq import ChatGroq
 from app.agents.base_agent import llm_model
+from dotenv import load_dotenv
+load_dotenv()
+api_key = os.getenv("FIRECRAWL_API_KEY")
+if not api_key:
+    raise ValueError("FIRECRAWL_API_KEY is missing from environment variables")
 
-firecrawl = Firecrawl(api_key="/")
-
+firecrawl = Firecrawl(api_key=api_key)
 def parse_the_data(url):
     """
     Scrape, extract, and summarize webpage content using Firecrawl and an LLM.
@@ -71,21 +76,17 @@ def parse_the_data(url):
                 print("Empty scrape result")
                 return None
         
-        # Extract metadata - check if it's a dict or object
         if isinstance(scrape_result, dict):
             metadata = scrape_result.get('metadata', {})
             url = metadata.get('sourceURL', url)
             title = metadata.get('title', 'No Title Found')
             description = metadata.get('description', 'No Description Found')
         else:
-            # Assume it's an object with attributes
             metadata = getattr(scrape_result, 'metadata', {})
-            # metadata might be an object too (DocumentMetadata)
             if hasattr(metadata, 'title'):
                 title = metadata.title
                 description = metadata.description
                 source_url = metadata.source_url if hasattr(metadata, 'source_url') else url
-                # Fallback for sourceURL vs source_url
                 if not source_url and hasattr(metadata, 'sourceURL'):
                      source_url = metadata.sourceURL
             elif isinstance(metadata, dict):
@@ -97,10 +98,9 @@ def parse_the_data(url):
                  description = 'No Description Found'
                  source_url = url
 
-        # Summarize description if it's too lon
         try:
             summary_prompt = f"Summarize the following text into approximately 200 words:\n\n{description}"
-            response = llm.invoke(summary_prompt)
+            response = llm_model.invoke(summary_prompt)
             description = response.content
         except Exception as e:
             print(f"Error summarizing description: {e}")

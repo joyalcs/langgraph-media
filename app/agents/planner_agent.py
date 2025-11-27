@@ -4,6 +4,7 @@ from typing import Any, Dict, Optional
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from app.core.state import State
 from app.agents.base_agent import llm_model
+from langgraph.prebuilt import create_react_agent
 
 
 def planner_descision_agent(user_message: str) -> Dict[str, Any]:
@@ -88,13 +89,34 @@ def planner_agent(state: State = {}):
     """
 
 
-    human_prompt = """
+    user_prompt = """
         ### User Intent:
         {intent}
 
         ### Output JSON Schema:
-        {format_instructions}
-
+        {
+            "user_confirmation_message": "Clear, concise message summarizing the plan",
+            "sections": [
+                {
+                    "title": "Descriptive title for this section",
+                    "time_range": {
+                        "start": "YYYY-MM-DD",
+                        "end": "YYYY-MM-DD"
+                    },
+                    "plan": "High-level description in markdown format explaining what this section will accomplish",
+                    "scope_of_research": "REQUIRED for 'research' sections. Detailed instructions: what keywords to search, what entities to focus on, what data points to extract.,
+                    "scope_of_analysis": "REQUIRED for 'analysis' sections. Specific analytical tasks: what questions to answer, what patterns to identify, what insights to generate.,
+                    "coverage_type": "company_news|competitors|risks_crisis|policy|cxo_mentions|landscape|narrative|analysis",
+                    "coverage_scope": "global",
+                    "competitors": ["Only list if explicitly mentioned by user or directly relevant, otherwise empty array"],
+                    "tone": "neutral|executive|technical",
+                    "length": "brief|standard|deep-dive",
+                    "languages": ["en"],
+                    "articles_target": "Number between 10-50 for research sections, 0 for analysis sections",
+                    "section_type": "research|analysis"
+                }
+            ]
+        }
         Important: Return ONLY a JSON object. No extra commentary.
         """
     format_instructions = """
@@ -129,20 +151,33 @@ def planner_agent(state: State = {}):
     - section_type: 'research' = data collection, 'analysis' = data synthesis
     """
 
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", system_prompt),
-        ("human", human_prompt)
-    ]).partial(format_instructions=format_instructions)
+    # prompt = ChatPromptTemplate.from_messages([
+    #     ("system", system_prompt),
+    #     ("human", human_prompt)
+    # ]).partial(format_instructions=format_instructions)
 
-    messages = prompt.format_messages(intent=user_intent)
-    raw_output = llm_model.invoke(messages)
+    # messages = prompt.format_messages(intent=user_intent)
+    # raw_output = llm_model.invoke(messages)
 
 
-    output_text = raw_output.content if hasattr(raw_output, "content") else str(raw_output)
+    # output_text = raw_output.content if hasattr(raw_output, "content") else str(raw_output)
+    agent = create_react_agent(
+        model=llm_model,
+        tools=[],
+        prompt=system_prompt
+   )
+    response = agent.invoke(
+      {"messages": [{"role": "user", "content": user_prompt}]}
+    )
+    print("INTENT RESPONSE=========================", response)
+    try:
+        for msg in response["messages"]:
+            if msg.__class__.__name__ == "AIMessage":
+                content = msg.content
+   
     
     # Parse JSON safely with better error handling
-    try:
-        json_data = json.loads(output_text)
+        json_data = json.loads(content)
         
         # Validate essential fields
         if "sections" not in json_data or not json_data["sections"]:
@@ -172,9 +207,9 @@ def planner_agent(state: State = {}):
         return state
     except json.JSONDecodeError as e:
         print(f"JSON parsing error: {e}")
-        print(f"Raw output: {output_text}")
-        return {"error": "Invalid JSON from model", "raw": output_text, "json_error": str(e)}
+        print(f"Raw output: {response}")
+        return {"error": "Invalid JSON from model", "raw": response, "json_error": str(e)}
     except Exception as e:
         print(f"Unexpected error: {e}")
-        return {"error": "Unexpected error processing plan", "raw": output_text, "exception": str(e)}
+        return {"error": "Unexpected error processing plan", "raw": response, "exception": str(e)}
 

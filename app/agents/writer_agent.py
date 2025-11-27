@@ -66,8 +66,5 @@ Write ONLY the introductory paragraph, no additional text or formatting."""
         report += "=" * 70 + "\n\n"
     print("=== REPORT AGENT OUTPUT ===")
     print(report)
-    # Update state with the generated report
-    return {
-        **state,
-        'report': report
-    }
+    state['report'] = report
+    return state

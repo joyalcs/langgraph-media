@@ -9,3 +9,4 @@ class State(TypedDict):
     coverage_type: Optional[Literal["company news", "competitors", "risks/crisis", "policy", "CXO mentions", "landscape", "narrative", "analysis"]]
     tone: Optional[Literal["neutral", "executive", "technical"]]
     research_data: List
+    report: str
