@@ -1,10 +1,12 @@
 import json
 from app.core.state import State
 from app.agents.base_agent import llm_model
-
-
+from datetime import datetime, timedelta
 def intent_agent(state: State = {}):
-    system_prompt = """
+    today = datetime.now().date()
+    thirty_days_ago = today - timedelta(days=30)
+    
+    system_prompt = f"""
         You are an Intent Detection Agent for a media application.
         Your job is to analyze the user's message and identify their intent with high precision.
 
@@ -39,14 +41,16 @@ def intent_agent(state: State = {}):
         3. Determine if the query is incomplete or ambiguous ("needs_clarification").
         4. If incomplete, describe exactly what information is missing in "missing_information".
         5. Provide a brief summary of your analysis in "findings".
+        6. If date range is not provided in the message, use last 30 days as date range (from {thirty_days_ago} to {today}).
+        7. If region is not specified in the user message, assume region as "global".
 
-        Response MUST be valid JSON ONLY:
-        {
-            "intent": "Brief summary of analysis and maximum 200 characters",
+        Response MUST be valid JSON ONLY with this exact structure:
+        {{
+            "intent": "<one of: media_info, search, recommendation, fact_lookup, news, unknown>",
             "needs_clarification": true/false,
-            "missing_information": "If clarification needed, explain what is missing, else empty string",
-            "findings": "Brief summary of analysis"
-        }
+            "missing_information": "<what is missing, or empty string>",
+            "findings": "<brief summary of analysis, maximum 200 characters>"
+        }}
     """
     user_prompt = f"""User Message: {state.get("user_message", "")}"""
 

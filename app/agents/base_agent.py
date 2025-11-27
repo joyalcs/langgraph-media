@@ -1,14 +1,6 @@
 from langchain_groq import ChatGroq
-
-llm_model = ChatGroq(
-    model="openai/gpt-oss-20b",
-    temperature=0,
-    max_tokens=None,
-    reasoning_format="parsed",
-    timeout=None,
-    max_retries=2,
-    # other params...
-)
+from langchain_openai import ChatOpenAI
+llm_model = lm = ChatOpenAI(model="gpt-5-nano", temperature=0.3)
     # from datetime import datetime
     # import json
     # from typing import Any, Dict

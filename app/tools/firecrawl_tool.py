@@ -3,8 +3,7 @@ import time
 from langchain_groq import ChatGroq
 from app.agents.base_agent import llm_model
 
-firecrawl = Firecrawl(api_key="fc-012536fdba0a40cb9f31d7412c7afd7b")
-llm = llm_model
+firecrawl = Firecrawl(api_key="/")
 
 def parse_the_data(url):
     """

@@ -97,7 +97,6 @@ def planner_agent(state: State = {}):
 
         Important: Return ONLY a JSON object. No extra commentary.
         """
-    print("human", human_prompt)
     format_instructions = """
         {
             "user_confirmation_message": "Clear, concise message summarizing the plan",
