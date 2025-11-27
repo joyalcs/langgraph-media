@@ -5,7 +5,7 @@ from app.workflows.graph import app as graph_app  # LangGraph instance
 app = FastAPI()
 
 @app.post("/")
-def run_graph(
+async def run_graph(
     user_message: Optional[str] = Form(None),
     payload: Optional[dict] = None
 ):
@@ -17,7 +17,7 @@ def run_graph(
     if not user_message:
         return {"error": "user_message is required"}
 
-    result = graph_app.invoke({
+    result = await graph_app.ainvoke({
         "user_message": user_message
     })
     return result
