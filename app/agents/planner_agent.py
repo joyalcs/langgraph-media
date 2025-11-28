@@ -7,34 +7,6 @@ from app.agents.base_agent import llm_model
 from langgraph.prebuilt import create_react_agent
 
 
-def planner_descision_agent(user_message: str) -> Dict[str, Any]:
-    system_prompt = """You are a message descision making agent. your task is to analyze the user's message and determine the appropriate action to take. You have access to the following tools:
-    1. APPROVE: When user is approving/confirming message is appropriate and does not violate any guidelines.
-    2. MODIFICATION: When user wants to modify the message to make it appropriate.
-    3. APPROVED_EXTEND: When user is unsure about the message and needs human review.
-    
-    Analyze the user message and classify it accurately."""
-
-    user_prompt = f"""User Message: {user_message}"
-
-    Classify this message and provide your analysis in the following JSON format:
-    {{
-        "action": "APPROVE" | "MODIFICATION" | "APPROVED_EXTEND",
-        "confidence": float (0.0 to 1.0),
-        "reasoning": "string explaining the reasoning behind the decision"
-    }}
-    Important: Return ONLY a valid JSON object. No additional text.
-    """
-
-    raw = llm_model.invoke(system_prompt + "\n\n" + user_prompt)
-
-    # Convert to dict safely
-    try:
-        return json.loads(raw)
-    except Exception:
-        return {"error": "Invalid JSON from model", "raw": raw}
-
-
 def planner_agent(state: State = {}):
     user_intent = state.get("intent", "")
     print("========================planner INPUT========================", user_intent)
@@ -151,16 +123,6 @@ def planner_agent(state: State = {}):
     - section_type: 'research' = data collection, 'analysis' = data synthesis
     """
 
-    # prompt = ChatPromptTemplate.from_messages([
-    #     ("system", system_prompt),
-    #     ("human", human_prompt)
-    # ]).partial(format_instructions=format_instructions)
-
-    # messages = prompt.format_messages(intent=user_intent)
-    # raw_output = llm_model.invoke(messages)
-
-
-    # output_text = raw_output.content if hasattr(raw_output, "content") else str(raw_output)
     agent = create_react_agent(
         model=llm_model,
         tools=[],

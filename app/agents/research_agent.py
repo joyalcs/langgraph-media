@@ -3,10 +3,10 @@ import asyncio
 from app.core.state import State
 from app.agents.base_agent import llm_model
 from app.tools.research_tools import faiss_recall_tool, tavily_search_tool
-from app.tools.firecrawl_tool import parse_the_data_async
+from app.tools.firecrawl_tool import parse_the_data
 from langgraph.prebuilt import create_react_agent
-
-
+from app.faiss_cache import FaissCache
+faiss_cache = FaissCache()
 async def generate_search_query(section, intent):
     """
     Generates a concise, keyword-optimized search query based on the section scope and user intent.
@@ -18,19 +18,24 @@ async def generate_search_query(section, intent):
     RULES:
     1. Output ONLY the search query string. No quotes, no explanations.
     2. Keep it under 200 characters.
-    3. Focus on specific entities, topics, and keywords.
+    3. Focus on specific entities, topics, and keywords mentioned in the user intent.
     4. Remove instruction words like "Search for", "Find", "Extract", "Analyze".
+    5. STAY TRUE to the user's original intent - DO NOT add topics not mentioned.
+    6. Use the exact entities, names, or keywords from the user intent.
     """
     
     user_prompt = f"""
+    ### User's Original Intent:
+    {intent}
+    
     ### Scope of Research:
     {section.get('scope_of_research')}
     
     ### Section Title:
     {section.get('title')}
     
-    ### User Intent:
-    {intent}
+    IMPORTANT: Base your query primarily on the User's Original Intent above.
+    Only use Scope/Title to add context, NOT to change the topic.
     
     Generate the best search query:
     """
@@ -42,16 +47,29 @@ async def generate_search_query(section, intent):
         # Remove quotes if present
         if query.startswith('"') and query.endswith('"'):
             query = query[1:-1]
-            
+        
+        # Remove common prefix patterns
+        prefixes_to_remove = ["search for ", "find ", "query: ", "search: "]
+        query_lower = query.lower()
+        for prefix in prefixes_to_remove:
+            if query_lower.startswith(prefix):
+                query = query[len(prefix):].strip()
+                break
+        
         # Hard truncation safety net
         if len(query) > 300:
             query = query[:300]
+        
+        # Fallback validation: ensure query relates to intent
+        if not query or len(query) < 3:
+            # Create simple fallback from intent
+            query = intent.strip()[:200]
             
         return query
     except Exception as e:
         print(f"  -> Query Generation Error: {e}")
-        # Fallback
-        return f"{section.get('title')} {intent}"[:200]
+        # Fallback to user intent directly
+        return intent.strip()[:200] if intent else section.get('title', '')[:200]
 
 
 async def process_section(section, intent, agent):
@@ -63,9 +81,13 @@ async def process_section(section, intent, agent):
     print("\n=== Running Agent for Query ===")
     print("QUERY:", query)
     
-    response = await agent.ainvoke(
-        {"messages": [{"role": "user", "content": query}]}
-    )
+    try:
+        response = await agent.ainvoke(
+            {"messages": [{"role": "user", "content": query}]}
+        )
+    except Exception as e:
+        print(f"Agent invocation error: {e}")
+        return []
 
     section_results = []
 
@@ -80,52 +102,77 @@ async def process_section(section, intent, agent):
                 
                 data = json.loads(content)
                 
-                if data is None:
-                    continue
-                
-                # Get results - handle both list and dict formats
-                if isinstance(data, list):
-                    results = data
-                elif isinstance(data, dict):
+                if tool_name == "faiss_recall_tool":
                     results = data.get("results", [])
-                else:
-                    print(f"Unexpected Tavily data type: {type(data)}")
-                    continue
-                
-                
-                # Prepare tasks for parallel scraping
-                scrape_tasks = []
-                for item in results:
-                    url = item.get("url")
-                    if not url:
-                        print("Skipping item without URL")
-                        continue
-                    scrape_tasks.append(parse_the_data_async(url))
-                
-                # Run scraping in parallel
-                if scrape_tasks:
-                    print(f"Scraping {len(scrape_tasks)} URLs in parallel...")
-                    scraped_data_list = await asyncio.gather(*scrape_tasks, return_exceptions=True)
+                    print(f"FAISS returned {len(results)} results")
                     
-                    for i, parsed_data in enumerate(scraped_data_list):
-                        if isinstance(parsed_data, Exception):
-                            print(f"Error parsing URL: {parsed_data}")
+                    for i, result in enumerate(results):
+                        # Fixed: properly access result data
+                        section_results.append({
+                            "title": result.get("title", ""),
+                            "description": result.get("content", result.get("description", "")),
+                            "url": result.get("url", ""),
+                        })
+                    
+                    print(f"FAISS results processed: {len(section_results)}")
+                    
+                elif tool_name == "tavily_search_tool":
+                    if data is None:
+                        continue
+                    
+                    # Get results - handle both list and dict formats
+                    if isinstance(data, list):
+                        results = data
+                    elif isinstance(data, dict):
+                        results = data.get("results", [])
+                    else:
+                        print(f"Unexpected Tavily data type: {type(data)}")
+                        continue
+                    
+                    print(f"Tavily returned {len(results)} results")
+                    
+                    # Prepare tasks for parallel scraping
+                    scrape_tasks = []
+                    for item in results:
+                        url = item.get("url")
+                        if not url:
+                            print("Skipping item without URL")
                             continue
+                        scrape_tasks.append(parse_the_data(url))
+                    
+                    # Run scraping in parallel
+                    if scrape_tasks:
+                        print(f"Scraping {len(scrape_tasks)} URLs in parallel...")
+                        scraped_data_list = await asyncio.gather(*scrape_tasks, return_exceptions=True)
                         
-                        if parsed_data:
-                            print("parsed data", parsed_data)
-                            section_results.append({
-                                "title": parsed_data.get("title", ""),
-                                "description": parsed_data.get("description", ""),
-                                "url": parsed_data.get("url", results[i].get("url")), # Fallback to original URL
-                            })
-
+                        for i, parsed_data in enumerate(scraped_data_list):
+                            if isinstance(parsed_data, Exception):
+                                print(f"Error parsing URL {results[i].get('url', 'unknown')}: {parsed_data}")
+                                continue
+                            
+                            if parsed_data and isinstance(parsed_data, dict):
+                                print(f"Successfully parsed: {parsed_data.get('title', 'No title')}")
+                                section_results.append({
+                                    "title": parsed_data.get("title", results[i].get("title", "")),
+                                    "description": parsed_data.get("description", parsed_data.get("content", "")),
+                                    "url": parsed_data.get("url", results[i].get("url", "")),
+                                })
+                            else:
+                                # Fallback: use original Tavily result
+                                section_results.append({
+                                    "title": results[i].get("title", ""),
+                                    "description": results[i].get("content", results[i].get("description", "")),
+                                    "url": results[i].get("url", ""),
+                                })
+                    faiss_cache.save(query, section_results)
             except json.JSONDecodeError as e:
-                print(f"JSON decode error for Tavily result: {e}")
-                print(f"Content was: {content}")
+                print(f"JSON decode error for {tool_name} result: {e}")
+                print(f"Content was: {content[:200]}...")
                 continue
             except Exception as e:
-                print(f"Unexpected error processing Tavily result: {e}")
+                print(f"Unexpected error processing {tool_name} result: {e}")
+                import traceback
+                traceback.print_exc()
                 continue
                 
     return section_results
@@ -145,6 +192,7 @@ async def research_agent(state: State):
     intent = state.get("intent", "")
 
     print("=== RESEARCH AGENT INPUT ===")
+    print(f"User Intent: {intent}")
     print(f"Total Sections: {len(sections)}")
 
     # ----------------------------
@@ -157,46 +205,28 @@ async def research_agent(state: State):
 
         ──────────────────────────────────────────
         STEP 1 — FAISS RECALL  
-        - Use faiss_recall_tool first.  
+        - Use faiss_recall_tool first with the user's query.
         - If FAISS returns NON-EMPTY results (len > 0):  
-            • Immediately return:  
-                [{"url": "<faiss_url>"}]  
-            • DO NOT perform Tavily search.  
+            • Stop immediately and return those results.
+            • DO NOT perform Tavily search.
+            • DO NOT call parse_the_data (FAISS data is already structured).
         ──────────────────────────────────────────
         STEP 2 — TAVILY SEARCH (only if FAISS was empty)  
-        - Use tavily_search_tool.  
-        - Tavily returns a list of URLs.
+        - Use tavily_search_tool with the same query.
+        - Tavily returns a list of URLs and snippets.
         ──────────────────────────────────────────
-        STEP 3 — PARSE (required for Tavily results)  
-        - For EVERY URL returned by Tavily:  
-            • Call parse_the_data  
+        STEP 3 — RETURN RESULTS
+        - Return the results from whichever tool provided data.
+        - The parsing will be handled automatically after this.
         ──────────────────────────────────────────
 
-        ⚡ IMPORTANT: OUTPUT RULES (READ CAREFULLY)
+        ⚡ IMPORTANT: 
 
-        You MUST:
-        1. Understand the user's intent from the query.
-        2. Infer what type of data they expect (movies, matches, gadgets, news, research facts).
-        3. Use ONLY the parsed data from the tools.
-        4. NEVER hallucinate anything not found.
-
-        Your FINAL OUTPUT MUST:
-        - Always be **valid JSON**.
-        - Always be a **list**.
-        - Automatically adapt structure based on the query.
-
-        EXAMPLES OF AUTO-ADAPTED OUTPUT:
-        - If the query is about movies → each item contains movie fields (title, release_date, url, etc.)
-        - If the query is about sports → include match fields (teams, score, date, url, etc.)
-        - If the query is about tech → include product fields (name, specs, launch_date, url, etc.)
-        - If the query is general research → return articles (title, summary, publication_date, url)
-        - If unsure → return the best structured representation based on parsed data.
-
-        DO NOT use a fixed schema.
-        DO NOT return explanations.
-        DO NOT wrap output in code blocks.
-
-        Your output must ALWAYS be a JSON list of objects based on the query’s intention.
+        1. ALWAYS try FAISS first
+        2. If FAISS has results, STOP - don't use Tavily
+        3. Only use Tavily if FAISS returned empty
+        4. Don't explain your actions, just execute the tools
+        5. The user's query contains their true intent - respect it exactly
     """
     
     agent = create_react_agent(
@@ -206,18 +236,26 @@ async def research_agent(state: State):
     )
 
     # Run sections in parallel
+    print(f"\nProcessing {len(sections)} sections in parallel...")
     tasks = [process_section(section, intent, agent) for section in sections]
-    results_list = await asyncio.gather(*tasks)
+    results_list = await asyncio.gather(*tasks, return_exceptions=True)
     
-    # Flatten results
-    research_results = [item for sublist in results_list for item in sublist]
+    # Flatten results and handle exceptions
+    research_results = []
+    for i, result in enumerate(results_list):
+        if isinstance(result, Exception):
+            print(f"Error processing section {i}: {result}")
+            continue
+        if isinstance(result, list):
+            research_results.extend(result)
+        else:
+            print(f"Unexpected result type from section {i}: {type(result)}")
 
     print(f"\n=== RESEARCH COMPLETE ===")
     print(f"Total results collected: {len(research_results)}")
     
     state["research_data"] = research_results
     return state
-
 
 def extract_data_with_llm(search_results, section, intent):
     """

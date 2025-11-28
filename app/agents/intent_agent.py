@@ -6,9 +6,43 @@ from langgraph.prebuilt import create_react_agent
 def intent_agent(state: State = {}):
    today = datetime.now().date()
    thirty_days_ago = today - timedelta(days=30)
+
+   safety_prompt = """
+    First, you MUST perform a Safety Classification on the user message.
+
+    Check if the content contains any of the following:
+    - Sexual / pornographic content
+    - Violence or threats
+    - Hate speech, racism, slurs, harassment
+    - Criminal intent (drugs, hacking, fraud, weapons, explosives)
+    - Self-harm or suicide
+    - Strong profanity
+    - Any harmful or antisocial content
+
+    If ANY of these categories match:
+        Immediately return ONLY this JSON:
+        {
+            "intent": "unsafe_content_detected",
+            "needs_clarification": True,
+            "missing_information": "",
+            "findings": "User content flagged as unsafe: <CATEGORY>"
+        }
+    Do NOT proceed to intent detection.
+    """
     
    system_prompt = f"""
         You are an Intent Detection Agent for a media and automotive application.
+
+        IMPORTANT:
+        1. FIRST run the Safety Classification rules below.
+        2. If unsafe → return the safety JSON and stop.
+        3. If safe → perform normal intent detection.
+
+        {safety_prompt}
+
+        -----------------------
+        INTENT DETECTION RULES
+        ----------------------
         Your job is to analyze the user's message and identify their intent with high precision.
         CRITICAL INSTRUCTIONS:
         1. Analyze the user's message carefully.

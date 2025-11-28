@@ -1,16 +1,20 @@
 import os
+import asyncio
 from firecrawl import Firecrawl
 import time
 from langchain_groq import ChatGroq
 from app.agents.base_agent import llm_model
 from dotenv import load_dotenv
+from app.faiss_cache import FaissCache
+
+faiss_cache = FaissCache()
 load_dotenv()
 api_key = os.getenv("FIRECRAWL_API_KEY")
 if not api_key:
     raise ValueError("FIRECRAWL_API_KEY is missing from environment variables")
 
 firecrawl = Firecrawl(api_key=api_key)
-def parse_the_data(url):
+async def parse_the_data(url):
     """
     Scrape, extract, and summarize webpage content using Firecrawl and an LLM.
 
@@ -64,10 +68,11 @@ def parse_the_data(url):
     """
     try:
         # Scrape a single webpage
-        scrape_result = firecrawl.scrape(
+        loop = asyncio.get_event_loop()
+        scrape_result = await loop.run_in_executor(None, lambda: firecrawl.scrape(
             url,
             formats=['markdown', 'html']
-        )
+        ))
         # Handle if scrape_result is a list
         if isinstance(scrape_result, list):
             if len(scrape_result) > 0:
@@ -100,7 +105,7 @@ def parse_the_data(url):
 
         try:
             summary_prompt = f"Summarize the following text into approximately 200 words:\n\n{description}"
-            response = llm_model.invoke(summary_prompt)
+            response = await llm_model.ainvoke(summary_prompt)
             description = response.content
         except Exception as e:
             print(f"Error summarizing description: {e}")

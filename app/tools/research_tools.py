@@ -93,8 +93,8 @@ def tavily_search_tool(query: str) -> list:
         result_json = json.dumps(result, ensure_ascii=False, indent=2)
         
         # Save to cache
-        faiss_cache.save(query, result_json)
-        print(f"✅ Search successful - cached result ({len(result_json)} chars)")
+        # faiss_cache.save(query, result_json)
+        # print(f"✅ Search successful - cached result ({len(result_json)} chars)")
         
         return result_json
         
